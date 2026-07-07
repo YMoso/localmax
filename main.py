@@ -124,7 +124,7 @@ default_df = pd.DataFrame({"number": [1, 2, 1, 2, 2, 3, 4, 2, 1, 2]})
 edited_df = st.data_editor(
     default_df,
     num_rows="dynamic",
-    width="stretch",
+    use_container_width=True,
     hide_index=False,
     column_config={
         "number": st.column_config.NumberColumn(
@@ -157,7 +157,7 @@ else:
 
 if best_peak is None:
     st.warning("No local peak was found.")
-    st.dataframe(matrix, width="stretch")
+    st.dataframe(matrix, use_container_width=True)
 
 else:
     styled = matrix.style.apply(
@@ -165,4 +165,4 @@ else:
         axis=None
     )
 
-    st.dataframe(styled, width="stretch")
+    st.dataframe(styled, use_container_width=True)
