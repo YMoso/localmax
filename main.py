@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 MAX_AUTO_GROUP_SIZE = 500
 MAX_PLOT_POINTS = 1500
 TOP_PEAKS_TO_SHOW = 20
+MAX_EDITABLE_ROWS = 1000
 
 
 def fmt_num(x):
@@ -32,6 +33,12 @@ def parse_numbers_from_text(text):
 
 
 def edit_numbers_table(numbers, key):
+    if len(numbers) > MAX_EDITABLE_ROWS:
+        st.info(
+            f"{len(numbers)} values loaded. Table editing is disabled for large datasets."
+        )
+        return numbers
+
     df = pd.DataFrame({"number": numbers})
 
     edited_df = st.data_editor(
@@ -55,13 +62,20 @@ def get_auto_group_size(numbers):
     return min(len(numbers), MAX_AUTO_GROUP_SIZE)
 
 
+def peak_key(peak):
+    return (
+        peak["strength"],
+        peak["value"],
+        peak["group_size"],
+        -peak["matrix_index"]
+    )
+
+
 def find_all_peaks(numbers):
-    all_peaks = []
+    top_peaks = []
     best_in_groups = {}
 
     arr = np.array(numbers, dtype=float)
-    n = len(arr)
-
     max_group_size = get_auto_group_size(numbers)
 
     cumsum = np.concatenate(([0], np.cumsum(arr)))
@@ -73,59 +87,62 @@ def find_all_peaks(numbers):
         if len(squared_sums) < 3:
             continue
 
-        group_peaks = []
+        previous_values = squared_sums[:-2]
+        current_values = squared_sums[1:-1]
+        next_values = squared_sums[2:]
 
-        for i in range(1, len(squared_sums) - 1):
+        peak_mask = (current_values > previous_values) & (current_values > next_values)
+        peak_indices = np.where(peak_mask)[0] + 1
+
+        group_best_peak = None
+
+        for i in peak_indices:
             previous_value = squared_sums[i - 1]
             current_value = squared_sums[i]
             next_value = squared_sums[i + 1]
 
-            if current_value > previous_value and current_value > next_value:
-                strength = (current_value - previous_value) + (current_value - next_value)
+            strength = (current_value - previous_value) + (current_value - next_value)
 
-                peak = {
-                    "group": f"group_{group_size}",
-                    "group_size": group_size,
-                    "matrix_index": i,
-                    "value": current_value,
-                    "previous": previous_value,
-                    "next": next_value,
-                    "strength": strength,
-                    "input_start_index": i,
-                    "input_end_index": i + group_size - 1
-                }
+            peak = {
+                "group": f"group_{group_size}",
+                "group_size": group_size,
+                "matrix_index": int(i),
+                "value": float(current_value),
+                "previous": float(previous_value),
+                "next": float(next_value),
+                "strength": float(strength),
+                "input_start_index": int(i),
+                "input_end_index": int(i + group_size - 1)
+            }
 
-                group_peaks.append(peak)
-                all_peaks.append(peak)
+            if group_best_peak is None or peak_key(peak) > peak_key(group_best_peak):
+                group_best_peak = peak
 
-        if group_peaks:
-            best_in_groups[f"group_{group_size}"] = max(
-                group_peaks,
-                key=lambda p: (
-                    p["strength"],
-                    p["value"],
-                    p["group_size"],
-                    -p["matrix_index"]
-                )
-            )
+            top_peaks.append(peak)
 
-    if not all_peaks:
+        if group_best_peak is not None:
+            best_in_groups[f"group_{group_size}"] = group_best_peak
+
+        if len(top_peaks) > TOP_PEAKS_TO_SHOW * 5:
+            top_peaks = sorted(
+                top_peaks,
+                key=peak_key,
+                reverse=True
+            )[:TOP_PEAKS_TO_SHOW]
+
+    if not top_peaks:
         return None, [], best_in_groups
 
-    all_peaks = sorted(
-        all_peaks,
-        key=lambda p: (
-            p["strength"],
-            p["value"],
-            p["group_size"],
-            -p["matrix_index"]
-        ),
+    top_peaks = sorted(
+        top_peaks,
+        key=peak_key,
         reverse=True
-    )
+    )[:TOP_PEAKS_TO_SHOW]
 
-    best_peak = all_peaks[0]
+    best_peak = top_peaks[0]
 
-    return best_peak, all_peaks, best_in_groups
+    return best_peak, top_peaks, best_in_groups
+
 
 def create_top_peaks_table(peaks):
     rows = []
@@ -185,9 +202,11 @@ def plot_input_with_peak_range(numbers, peak):
     if y_range == 0:
         y_range = 1
 
+    baseline = y_min - y_range * 0.08
+
     plt.rcParams["font.family"] = "DejaVu Sans"
 
-    fig, ax = plt.subplots(figsize=(15, 6), dpi=180)
+    fig, ax = plt.subplots(figsize=(15, 6), dpi=120)
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
 
@@ -198,22 +217,22 @@ def plot_input_with_peak_range(numbers, peak):
             where="post",
             linewidth=2.0,
             color="#64748b",
-            alpha=0.42
+            alpha=0.38
         )
     else:
         ax.step(
             plot_x,
             plot_y,
             where="post",
-            linewidth=2.0,
+            linewidth=1.0,
             color="#64748b",
-            alpha=0.42
+            alpha=0.22
         )
 
     ax.fill_between(
         selected_x,
         selected_y,
-        y_min - y_range * 0.08,
+        baseline,
         step="post",
         color="#f59e0b",
         alpha=0.26
@@ -223,24 +242,24 @@ def plot_input_with_peak_range(numbers, peak):
         selected_x,
         selected_y,
         where="post",
-        linewidth=0.9,
+        linewidth=2.4,
         color="#b45309"
     )
 
     ax.axvline(
         start,
-        linewidth=1.4,
+        linewidth=1.2,
         linestyle="--",
         color="#92400e",
-        alpha=0.28
+        alpha=0.25
     )
 
     ax.axvline(
         display_end,
-        linewidth=1.4,
+        linewidth=1.2,
         linestyle="--",
         color="#92400e",
-        alpha=0.28
+        alpha=0.25
     )
 
     ax.set_title(
@@ -364,10 +383,17 @@ if len(numbers) < 3:
     st.stop()
 
 
-best_peak, all_peaks, best_by_group = find_all_peaks(numbers)
+with st.spinner("Finding peaks..."):
+    best_peak, all_peaks, best_by_group = find_all_peaks(numbers)
+
+
 if best_peak is None:
     st.warning("No local peak was found.")
 else:
-
     fig_range = plot_input_with_peak_range(numbers, best_peak)
     st.pyplot(fig_range)
+
+    peaks_table = create_top_peaks_table(all_peaks)
+
+    with st.expander("Show top detected peaks"):
+        st.dataframe(peaks_table, hide_index=True)
