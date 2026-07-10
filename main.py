@@ -215,7 +215,7 @@ def plot_input_with_peak_range(numbers, peak):
             full_x,
             full_y,
             where="post",
-            linewidth=2.0,
+            linewidth=1.0,
             color="#64748b",
             alpha=0.38
         )
@@ -242,7 +242,7 @@ def plot_input_with_peak_range(numbers, peak):
         selected_x,
         selected_y,
         where="post",
-        linewidth=2.4,
+        linewidth=0.3,
         color="#b45309"
     )
 
