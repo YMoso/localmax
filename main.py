@@ -4,26 +4,15 @@ import streamlit as st
 import matplotlib.pyplot as plt
 
 
-MAX_STYLED_CELLS = 262144
-MATRIX_PREVIEW_ROWS = 100
-MATRIX_PREVIEW_COLS = 100
+MAX_AUTO_GROUP_SIZE = 500
 MAX_PLOT_POINTS = 1500
+TOP_PEAKS_TO_SHOW = 20
 
 
 def fmt_num(x):
     if float(x).is_integer():
         return str(int(x))
     return str(round(float(x), 4))
-
-
-def fmt_table_value(x):
-    if pd.isna(x):
-        return ""
-
-    if isinstance(x, (int, float, np.integer, np.floating)):
-        return f"{float(x):.3f}".rstrip("0").rstrip(".")
-
-    return str(x)
 
 
 def parse_numbers_from_text(text):
@@ -62,62 +51,56 @@ def edit_numbers_table(numbers, key):
     return edited_df["number"].dropna().astype(float).tolist()
 
 
-def make_matrix(numbers, max_group_size):
-    n = len(numbers)
-    arr = np.array(numbers, dtype=float)
+def get_auto_group_size(numbers):
+    return min(len(numbers), MAX_AUTO_GROUP_SIZE)
 
-    max_group_size = min(max_group_size, n)
+
+def find_all_peaks(numbers):
+    all_peaks = []
+    best_in_groups = {}
+
+    arr = np.array(numbers, dtype=float)
+    n = len(arr)
+
+    max_group_size = get_auto_group_size(numbers)
 
     cumsum = np.concatenate(([0], np.cumsum(arr)))
-    result = {}
 
-    for size in range(1, max_group_size + 1):
-        window_sums = cumsum[size:] - cumsum[:-size]
-        squared_sums = window_sums ** 2
-        result[f"group_{size}"] = pd.Series(np.round(squared_sums, 3))
+    for group_size in range(1, max_group_size + 1):
+        window_sums = cumsum[group_size:] - cumsum[:-group_size]
+        squared_sums = np.round(window_sums ** 2, 3)
 
-    return pd.DataFrame(result)
+        if len(squared_sums) < 3:
+            continue
 
+        group_peaks = []
 
-def find_peaks_for_column(values, group_size, column_name):
-    peaks = []
+        for i in range(1, len(squared_sums) - 1):
+            previous_value = squared_sums[i - 1]
+            current_value = squared_sums[i]
+            next_value = squared_sums[i + 1]
 
-    for i in range(1, len(values) - 1):
-        prev_val = values[i - 1]
-        curr_val = values[i]
-        next_val = values[i + 1]
+            if current_value > previous_value and current_value > next_value:
+                strength = (current_value - previous_value) + (current_value - next_value)
 
-        if curr_val > prev_val and curr_val > next_val:
-            strength = (curr_val - prev_val) + (curr_val - next_val)
+                peak = {
+                    "group": f"group_{group_size}",
+                    "group_size": group_size,
+                    "matrix_index": i,
+                    "value": current_value,
+                    "previous": previous_value,
+                    "next": next_value,
+                    "strength": strength,
+                    "input_start_index": i,
+                    "input_end_index": i + group_size - 1
+                }
 
-            peaks.append({
-                "column": column_name,
-                "group_size": group_size,
-                "matrix_index": i,
-                "value": curr_val,
-                "previous": prev_val,
-                "next": next_val,
-                "strength": strength,
-                "input_start_index": i,
-                "input_end_index": i + group_size - 1
-            })
+                group_peaks.append(peak)
+                all_peaks.append(peak)
 
-    return peaks
-
-
-def find_all_peaks(matrix):
-    all_peaks = []
-    best_in_columns = {}
-
-    for col in matrix.columns:
-        vals = matrix[col].dropna().tolist()
-        group_size = int(col.replace("group_", ""))
-
-        peaks = find_peaks_for_column(vals, group_size, col)
-
-        if len(peaks) > 0:
-            best_peak = max(
-                peaks,
+        if group_peaks:
+            best_in_groups[f"group_{group_size}"] = max(
+                group_peaks,
                 key=lambda p: (
                     p["strength"],
                     p["value"],
@@ -126,106 +109,44 @@ def find_all_peaks(matrix):
                 )
             )
 
-            best_in_columns[col] = best_peak
-            all_peaks.extend(peaks)
+    if not all_peaks:
+        return None, [], best_in_groups
 
-    if len(all_peaks) == 0:
-        return None, best_in_columns
-
-    best_overall = max(
+    all_peaks = sorted(
         all_peaks,
         key=lambda p: (
             p["strength"],
             p["value"],
             p["group_size"],
             -p["matrix_index"]
-        )
+        ),
+        reverse=True
     )
 
-    return best_overall, best_in_columns
+    best_peak = all_peaks[0]
 
+    return best_peak, all_peaks, best_in_groups
 
-def highlight_table(matrix, best_peak, best_by_col):
-    style = pd.DataFrame("", index=matrix.index, columns=matrix.columns)
+def create_top_peaks_table(peaks):
+    rows = []
 
-    for col, peak in best_by_col.items():
-        row = peak["matrix_index"]
+    for peak in peaks[:TOP_PEAKS_TO_SHOW]:
+        start = peak["input_start_index"]
+        end = peak["input_end_index"]
+        display_end = end + 1
 
-        if row in style.index and col in style.columns:
-            style.loc[row, col] = (
-                "background-color: #ffdd57; "
-                "color: black; "
-                "font-weight: bold;"
-            )
+        rows.append({
+            "Rank": len(rows) + 1,
+            "Group": peak["group"],
+            "Group size": peak["group_size"],
+            "Peak index": peak["matrix_index"],
+            "Input start": start,
+            "Input end": display_end,
+            "Peak value": round(float(peak["value"]), 3),
+            "Strength": round(float(peak["strength"]), 3)
+        })
 
-    if best_peak is not None:
-        row = best_peak["matrix_index"]
-        col = best_peak["column"]
-
-        if row in style.index and col in style.columns:
-            style.loc[row, col] = (
-                "background-color: #8fd19e; "
-                "color: black; "
-                "font-weight: bold;"
-            )
-
-    return style
-
-
-def show_peak_details(numbers, peak):
-    st.info(
-        f"""
-        Peak found in **{peak["column"]}**  
-        Matrix index: **{peak["matrix_index"]}**  
-        """
-    )
-
-
-def show_interval(numbers, peak):
-    start = peak["input_start_index"]
-    end = peak["input_end_index"]
-
-    html = """
-    <div style="
-        display:flex;
-        flex-wrap:wrap;
-        gap:8px;
-        margin-top:16px;
-        margin-bottom:16px;
-    ">
-    """
-
-    for i, num in enumerate(numbers):
-        selected = start <= i <= end
-
-        if selected:
-            bg = "#d4edda"
-            border = "#2f9e44"
-            weight = "700"
-        else:
-            bg = "#f1f3f5"
-            border = "#dee2e6"
-            weight = "400"
-
-        html += f"""
-        <div style="
-            padding:10px 14px;
-            border-radius:10px;
-            border:2px solid {border};
-            background-color:{bg};
-            color:black;
-            font-weight:{weight};
-            text-align:center;
-            min-width:55px;
-        ">
-            <div style="font-size:12px; color:#666;">{i}</div>
-            <div style="font-size:18px;">{fmt_num(num)}</div>
-        </div>
-        """
-
-    html += "</div>"
-
-    st.html(html)
+    return pd.DataFrame(rows)
 
 
 def downsample_points(x, y, max_points=1500):
@@ -248,7 +169,11 @@ def plot_input_with_peak_range(numbers, peak):
     full_x = list(range(len(numbers)))
     full_y = numbers
 
-    plot_x, plot_y = downsample_points(full_x, full_y, max_points=MAX_PLOT_POINTS)
+    plot_x, plot_y = downsample_points(
+        full_x,
+        full_y,
+        max_points=MAX_PLOT_POINTS
+    )
 
     selected_x = list(range(start, display_end + 1))
     selected_y = numbers[start:end + 1] + [numbers[end]]
@@ -260,140 +185,116 @@ def plot_input_with_peak_range(numbers, peak):
     if y_range == 0:
         y_range = 1
 
-    fig, ax = plt.subplots(figsize=(13, 5))
+    plt.rcParams["font.family"] = "DejaVu Sans"
 
-    if len(numbers) <= 100:
+    fig, ax = plt.subplots(figsize=(15, 6), dpi=180)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+
+    if len(numbers) <= MAX_PLOT_POINTS:
         ax.step(
             full_x,
             full_y,
             where="post",
-            linewidth=1.4,
-            alpha=0.25,
-            label="Input values"
-        )
-
-        ax.scatter(
-            full_x,
-            full_y,
-            s=30,
-            alpha=0.35
+            linewidth=2.0,
+            color="#64748b",
+            alpha=0.42
         )
     else:
-        ax.plot(
+        ax.step(
             plot_x,
             plot_y,
-            linewidth=1.1,
-            alpha=0.28,
-            label="Input values"
+            where="post",
+            linewidth=2.0,
+            color="#64748b",
+            alpha=0.42
         )
+
+    ax.fill_between(
+        selected_x,
+        selected_y,
+        y_min - y_range * 0.08,
+        step="post",
+        color="#f59e0b",
+        alpha=0.26
+    )
 
     ax.step(
         selected_x,
         selected_y,
         where="post",
-        linewidth=4,
-        label="Selected range"
+        linewidth=0.9,
+        color="#b45309"
     )
 
-    if len(numbers) <= 100:
-        ax.scatter(
-            list(range(start, end + 1)),
-            numbers[start:end + 1],
-            s=70,
-            zorder=5
-        )
-    elif len(selected_x) <= 300:
-        ax.scatter(
-            list(range(start, end + 1)),
-            numbers[start:end + 1],
-            s=45,
-            zorder=5
-        )
-
-    ax.vlines(
-        x=start,
-        ymin=y_min - y_range * 0.15,
-        ymax=y_max + y_range * 0.12,
-        linestyles="--",
-        linewidth=1.2,
-        alpha=0.55
+    ax.axvline(
+        start,
+        linewidth=1.4,
+        linestyle="--",
+        color="#92400e",
+        alpha=0.28
     )
 
-    ax.vlines(
-        x=display_end,
-        ymin=y_min - y_range * 0.15,
-        ymax=y_max + y_range * 0.12,
-        linestyles="--",
-        linewidth=1.2,
-        alpha=0.55
-    )
-
-    ax.hlines(
-        y=y_min - y_range * 0.08,
-        xmin=start,
-        xmax=display_end,
-        linewidth=6
-    )
-
-    ax.annotate(
-        f"Selected range: input[{start}] → input[{display_end}]",
-        xy=((start + display_end) / 2, y_min - y_range * 0.08),
-        xytext=(0, -24),
-        textcoords="offset points",
-        ha="center",
-        fontsize=10,
-        fontweight="bold"
+    ax.axvline(
+        display_end,
+        linewidth=1.4,
+        linestyle="--",
+        color="#92400e",
+        alpha=0.28
     )
 
     ax.set_title(
-        "Selected input range that creates the best peak",
-        fontsize=14,
+        "Detected Peak in the Input Sequence",
+        fontsize=21,
         fontweight="bold",
-        pad=16
+        pad=22
     )
 
-    ax.set_xlabel("Input index")
-    ax.set_ylabel("Input value")
+    ax.set_xlabel(
+        "Input index",
+        fontsize=17,
+        fontweight="bold",
+        labelpad=14
+    )
+
+    ax.set_ylabel(
+        "Input value",
+        fontsize=17,
+        fontweight="bold",
+        labelpad=14
+    )
+
+    ax.tick_params(
+        axis="both",
+        labelsize=13,
+        width=1.3,
+        length=6,
+        colors="#1f2937"
+    )
 
     ax.set_xlim(-0.5, len(numbers) - 0.5)
-    ax.set_ylim(y_min - y_range * 0.25, y_max + y_range * 0.3)
+    ax.set_ylim(y_min - y_range * 0.1, y_max + y_range * 0.15)
 
-    ax.grid(True, axis="y", alpha=0.25)
-    ax.legend(loc="upper right")
+    ax.grid(
+        True,
+        axis="y",
+        color="#e5e7eb",
+        linewidth=1.1
+    )
+
+    ax.grid(False, axis="x")
 
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
+    ax.spines["left"].set_linewidth(1.4)
+    ax.spines["bottom"].set_linewidth(1.4)
+    ax.spines["left"].set_color("#1f2937")
+    ax.spines["bottom"].set_color("#1f2937")
+
     fig.tight_layout()
 
     return fig
-
-
-def show_matrix(matrix, best_peak=None, best_by_column=None):
-    with st.expander("Show matrix"):
-        if matrix.size > MAX_STYLED_CELLS:
-            st.warning(
-                f"Matrix is too large to style: {matrix.shape[0]} rows × {matrix.shape[1]} columns. "
-                f"Showing only first {MATRIX_PREVIEW_ROWS} rows and first {MATRIX_PREVIEW_COLS} columns."
-            )
-
-            preview = matrix.iloc[:MATRIX_PREVIEW_ROWS, :MATRIX_PREVIEW_COLS]
-            st.dataframe(preview)
-        else:
-            if best_peak is None or best_by_column is None:
-                st.dataframe(matrix.style.format(fmt_table_value))
-            else:
-                styled = (
-                    matrix
-                    .style
-                    .format(fmt_table_value)
-                    .apply(
-                        lambda _: highlight_table(matrix, best_peak, best_by_column),
-                        axis=None
-                    )
-                )
-
-                st.dataframe(styled)
 
 
 st.set_page_config(page_title="LocalMax", layout="wide")
@@ -462,29 +363,10 @@ if len(numbers) < 3:
     st.stop()
 
 
-max_group_size = st.slider(
-    "Max group size",
-    min_value=1,
-    max_value=min(len(numbers), 500),
-    value=min(len(numbers), 200)
-)
-
-
-matrix = make_matrix(numbers, max_group_size)
-best_peak, best_by_column = find_all_peaks(matrix)
-
-
+best_peak, all_peaks, best_by_group = find_all_peaks(numbers)
 if best_peak is None:
-    st.info("No local peak was found, so there is no interval to show.")
     st.warning("No local peak was found.")
-    show_matrix(matrix)
 else:
-    show_peak_details(numbers, best_peak)
-
-    if len(numbers) <= 200:
-        show_interval(numbers, best_peak)
 
     fig_range = plot_input_with_peak_range(numbers, best_peak)
     st.pyplot(fig_range)
-
-    show_matrix(matrix, best_peak, best_by_column)
