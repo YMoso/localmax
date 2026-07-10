@@ -300,9 +300,10 @@ def plot_input_with_peak_range(numbers, peak):
 st.set_page_config(page_title="LocalMax", layout="wide")
 
 input_method = st.radio(
-    "",
+    "Input method",
     ["Manual table", "Paste values", "Upload CSV"],
-    horizontal=True
+    horizontal=True,
+    label_visibility="collapsed"
 )
 
 numbers = []
