@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 MAX_AUTO_GROUP_SIZE = 500
 MAX_PLOT_POINTS = 1500
 TOP_PEAKS_TO_SHOW = 20
-MAX_EDITABLE_ROWS = 1000
+MAX_EDITABLE_ROWS = 200
 
 
 def fmt_num(x):
@@ -33,7 +33,7 @@ def parse_numbers_from_text(text):
 
 
 def edit_numbers_table(numbers, key):
-    if len(numbers) > MAX_EDITABLE_ROWS:
+    if len(numbers) >= MAX_EDITABLE_ROWS:
         st.info(
             f"{len(numbers)} values loaded. Table editing is disabled for large datasets."
         )
@@ -367,7 +367,11 @@ elif input_method == "Upload CSV":
 
     loaded_numbers = uploaded_df[selected_column].dropna().astype(float).tolist()
 
-    numbers = edit_numbers_table(loaded_numbers, key="csv_editor")
+    if len(loaded_numbers) >= MAX_EDITABLE_ROWS:
+        st.info(f"{len(loaded_numbers)} values loaded.")
+        numbers = loaded_numbers
+    else:
+        numbers = edit_numbers_table(loaded_numbers, key="csv_editor")
 
 else:
     default_numbers = [
@@ -391,7 +395,8 @@ if best_peak is None:
     st.warning("No local peak was found.")
 else:
     fig_range = plot_input_with_peak_range(numbers, best_peak)
-    st.pyplot(fig_range)
+    st.pyplot(fig_range, clear_figure=True)
+    plt.close(fig_range)
 
     peaks_table = create_top_peaks_table(all_peaks)
 
